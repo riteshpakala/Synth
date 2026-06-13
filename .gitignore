@@ -5,6 +5,11 @@
 ## User settings
 xcuserdata/
 
+.build/
+.claude/
+.vscode/
+.DS_Store
+
 ## Obj-C/Swift specific
 *.hmap
 
