@@ -4,10 +4,11 @@ import SynthCore
 // The CLI tool. By default it plays the shared `Pattern.test` sequence and
 // exits once the sound has finished. Pass note names to play them instead.
 //
-//   swift run synth-cli                      # play the shared test sequence
-//   swift run synth-cli C4 E4 G4 C5          # play these notes
-//   swift run synth-cli -w sine -t 90 A4 B4  # pick waveform + tempo
-//   swift run synth-cli --list               # list all 88 keys
+//   swift run synth-cli                          # play the shared test sequence
+//   swift run synth-cli C4 E4 G4 C5              # play these notes
+//   swift run synth-cli -v steinway -t 90 A4 B4  # pick a voice + tempo
+//   swift run synth-cli --list-voices            # list available sounds
+//   swift run synth-cli --list                   # list all 88 keys
 //   swift run synth-cli --help
 
 func printUsage() {
@@ -24,10 +25,11 @@ func printUsage() {
         Note names like C4, F#5, Eb3, A4. Each plays as a quarter note.
 
     OPTIONS:
-        -w, --waveform <name>   sine | square | triangle | sawtooth | voice (default: voice)
-        -t, --tempo <bpm>       beats per minute (default: 120)
-        -l, --list              list all 88 keys with frequencies, then exit
-        -h, --help              show this help, then exit
+        -v, --voice <name>   sound to use; see --list-voices (default: \(VoiceLibrary.default.name))
+        -t, --tempo <bpm>    beats per minute (default: 120)
+        -l, --list           list all 88 keys with frequencies, then exit
+            --list-voices    list available voices, then exit
+        -h, --help           show this help, then exit
     """)
 }
 
@@ -35,6 +37,15 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 
 if arguments.contains("-h") || arguments.contains("--help") {
     printUsage()
+    exit(0)
+}
+
+if arguments.contains("--list-voices") {
+    print("Available voices:")
+    for voice in VoiceLibrary.all {
+        let marker = voice.name == VoiceLibrary.default.name ? " (default)" : ""
+        print("  \(voice.name)\(marker)")
+    }
     exit(0)
 }
 
@@ -47,7 +58,7 @@ if arguments.contains("-l") || arguments.contains("--list") {
 }
 
 // Parse options and collect bare note tokens.
-var waveform: Waveform = .voice
+var voice: any Voice = VoiceLibrary.default
 var tempo = 120.0
 var noteTokens: [String] = []
 
@@ -55,12 +66,12 @@ var index = 0
 while index < arguments.count {
     let argument = arguments[index]
     switch argument {
-    case "-w", "--waveform":
+    case "-v", "--voice":
         index += 1
-        if index < arguments.count, let parsed = Waveform(rawValue: arguments[index]) {
-            waveform = parsed
+        if index < arguments.count, let parsed = VoiceLibrary.named(arguments[index]) {
+            voice = parsed
         } else {
-            FileHandle.standardError.write(Data("Unknown waveform.\n".utf8))
+            FileHandle.standardError.write(Data("Unknown voice. Try --list-voices.\n".utf8))
             exit(2)
         }
     case "-t", "--tempo":
@@ -91,8 +102,8 @@ if noteTokens.isEmpty {
         }
         keys.append(key)
     }
-    print("♪ Playing \(keys.count) note(s) as \(waveform.rawValue) @ \(Int(tempo)) BPM…")
-    pattern = Pattern(tempo: tempo, waveform: waveform, steps: keys.map { Note($0, .quarter) })
+    print("♪ Playing \(keys.count) note(s) on \(voice.name) @ \(Int(tempo)) BPM…")
+    pattern = Pattern(tempo: tempo, voice: voice, steps: keys.map { Note($0, .quarter) })
 }
 
 do {

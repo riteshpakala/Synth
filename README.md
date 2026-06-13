@@ -11,7 +11,10 @@ Package.swift
 Sources/
   SynthCore/            ← shared engine (used by BOTH the CLI and the GUI)
     PianoKey.swift        88-key mapping: number, MIDI, frequency, name
-    Waveform.swift        sine / square / triangle / sawtooth / voice
+    Voice.swift           ★ Voice protocol + VoiceLibrary registry (sound options) ★
+    OscillatorVoice.swift sine / triangle / square / sawtooth / synth-voice presets
+    SteinwayGrandPianoVoice.swift  additive, inharmonic grand-piano synthesis
+    Waveform.swift        raw oscillator shapes used by OscillatorVoice
     Envelope.swift        ADSR amplitude envelope
     NoteValue.swift       rhythmic durations (whole … thirty-second, dotted)
     Pattern.swift         declarative DSL: Note / Chord / Rest + @PatternBuilder
@@ -46,10 +49,11 @@ so there is exactly one place to edit.
 ## CLI usage
 
 ```sh
-./run-cli.sh                      # play the shared test sequence
-./run-cli.sh C4 E4 G4 C5          # play specific notes
-./run-cli.sh -w sine -t 90 A4 B4  # choose waveform + tempo
-./run-cli.sh --list               # list all 88 keys with frequencies
+./run-cli.sh                             # play the shared test sequence
+./run-cli.sh C4 E4 G4 C5                 # play specific notes
+./run-cli.sh -v steinway -t 90 A4 B4     # choose voice + tempo
+./run-cli.sh --list-voices               # list available sounds
+./run-cli.sh --list                      # list all 88 keys with frequencies
 ./run-cli.sh --help
 ```
 
@@ -59,22 +63,43 @@ so there is exactly one place to edit.
 ./run-app.sh
 ```
 
-Click any key to sound it, pick a waveform, set the tempo, or play the shared
+Click any key to sound it, pick a voice, set the tempo, or play the shared
 test sequence (Space).
+
+## Sounds (voices)
+
+A **voice** is a selectable sound — the thing that turns a note into audio. It
+owns its own waveform/spectrum and envelope, so different voices can synthesize
+in completely different ways behind one interface. Built-in voices:
+
+- `Sine`, `Triangle`, `Square`, `Sawtooth` — basic oscillators
+- `Synth Voice` — an additive harmonic stack (seed for the vocal synth)
+- `Steinway Grand Piano` — additive, inharmonic grand-piano synthesis (default)
+
+### Adding a voice (extension point)
+
+1. Conform a type to [`Voice`](Sources/SynthCore/Voice.swift) and implement
+   `render(frequency:duration:velocity:sampleRate:)`.
+2. Add a preset in a `extension Voice where Self == YourVoice { … }` block (so
+   it's usable as `.yourVoice`).
+3. List it in `VoiceLibrary.all` — it then appears in the CLI (`--list-voices`,
+   `-v`) and the GUI picker automatically.
+
+This is how future vocal styles will plug in.
 
 ## Writing patterns
 
 ```swift
 import SynthCore
 
-let pattern = Pattern(tempo: 120, waveform: .voice) {
+let pattern = Pattern(tempo: 120, voice: .steinwayGrand) {
     Note("C4", .quarter)
     Chord(["C4", "E4", "G4"], .half)
     Rest(.eighth)
     for name in ["D4", "E4", "F4"] {
         Note(name, .eighth)
     }
-    Note("C4", .half, waveform: .sine)   // per-note waveform override
+    Note("C4", .half, voice: .sine)   // per-note voice override
 }
 
 try SequencePlayer().playAndWait(pattern)   // blocks until finished (CLI)
@@ -84,7 +109,8 @@ try SequencePlayer().play(pattern)          // fire-and-forget (GUI)
 
 ## Toward a vocal synth
 
-`Waveform.voice` is an additive harmonic stack — the seed for formant-based
-vowel synthesis. Sculpt its harmonics, and extend `Synthesizer` with formant
-filtering and per-note vowel parameters as the project grows.
+The `Voice` protocol is the seam for vocal styles: a future `VocalVoice` would
+do formant-based vowel synthesis (sculpting the harmonics in `Synth Voice` with
+formant filtering and per-note vowel parameters) and slot into `VoiceLibrary`
+alongside the piano.
 ```

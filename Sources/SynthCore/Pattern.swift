@@ -11,13 +11,13 @@ public struct Step: Sendable {
 
     public var content: Content
     public var value: NoteValue
-    /// Overrides the pattern's waveform for this step when non-nil.
-    public var waveform: Waveform?
+    /// Overrides the pattern's voice for this step when non-nil.
+    public var voice: (any Voice)?
 
-    public init(content: Content, value: NoteValue, waveform: Waveform? = nil) {
+    public init(content: Content, value: NoteValue, voice: (any Voice)? = nil) {
         self.content = content
         self.value = value
-        self.waveform = waveform
+        self.voice = voice
     }
 }
 
@@ -28,9 +28,9 @@ public func Note(
     _ key: PianoKey,
     _ value: NoteValue = .quarter,
     velocity: Double = 0.8,
-    waveform: Waveform? = nil
+    voice: (any Voice)? = nil
 ) -> Step {
-    Step(content: .tone(keys: [key], velocity: velocity), value: value, waveform: waveform)
+    Step(content: .tone(keys: [key], velocity: velocity), value: value, voice: voice)
 }
 
 /// Several keys sounded together.
@@ -38,9 +38,9 @@ public func Chord(
     _ keys: [PianoKey],
     _ value: NoteValue = .quarter,
     velocity: Double = 0.8,
-    waveform: Waveform? = nil
+    voice: (any Voice)? = nil
 ) -> Step {
-    Step(content: .tone(keys: keys, velocity: velocity), value: value, waveform: waveform)
+    Step(content: .tone(keys: keys, velocity: velocity), value: value, voice: voice)
 }
 
 /// Silence for the given duration.
@@ -53,7 +53,7 @@ public func Rest(_ value: NoteValue = .quarter) -> Step {
 /// Lets patterns be written declaratively, with control flow:
 ///
 /// ```swift
-/// Pattern(tempo: 120, waveform: .voice) {
+/// Pattern(tempo: 120, voice: .steinwayGrand) {
 ///     Note("C4", .quarter)
 ///     Chord(["C4", "E4", "G4"], .half)
 ///     for name in ["D4", "E4", "F4"] { Note(name, .eighth) }
@@ -70,39 +70,34 @@ public enum PatternBuilder {
     public static func buildEither(second component: [Step]) -> [Step] { component }
 }
 
-/// A declarative, tempo-based sequence of notes, chords, and rests.
+/// A declarative, tempo-based sequence of notes, chords, and rests, played with
+/// a chosen `Voice`.
 public struct Pattern: Sendable {
     /// Beats per minute (a quarter note per beat).
     public var tempo: Double
-    /// Default timbre for steps that don't override it.
-    public var waveform: Waveform
-    /// Amplitude envelope applied to every tone.
-    public var envelope: Envelope
+    /// The sound used for steps that don't override it.
+    public var voice: any Voice
     /// The ordered events.
     public var steps: [Step]
 
     public init(
         tempo: Double = 120,
-        waveform: Waveform = .sine,
-        envelope: Envelope = .default,
+        voice: any Voice = OscillatorVoice.sine,
         @PatternBuilder steps: () -> [Step]
     ) {
         self.tempo = tempo
-        self.waveform = waveform
-        self.envelope = envelope
+        self.voice = voice
         self.steps = steps()
     }
 
     /// Designated initializer for building patterns programmatically.
     public init(
         tempo: Double = 120,
-        waveform: Waveform = .sine,
-        envelope: Envelope = .default,
+        voice: any Voice = OscillatorVoice.sine,
         steps: [Step]
     ) {
         self.tempo = tempo
-        self.waveform = waveform
-        self.envelope = envelope
+        self.voice = voice
         self.steps = steps
     }
 
@@ -118,8 +113,8 @@ public struct Pattern: Sendable {
         _ key: PianoKey,
         value: NoteValue = .quarter,
         tempo: Double = 120,
-        waveform: Waveform = .sine
+        voice: any Voice = OscillatorVoice.sine
     ) -> Pattern {
-        Pattern(tempo: tempo, waveform: waveform, steps: [Note(key, value, waveform: waveform)])
+        Pattern(tempo: tempo, voice: voice, steps: [Note(key, value)])
     }
 }

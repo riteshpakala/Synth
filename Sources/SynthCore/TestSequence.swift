@@ -12,21 +12,39 @@ import Foundation
 extension Pattern {
     /// The sequence under test. Shared by the CLI and GUI so there is exactly
     /// one place to edit while you iterate.
+    ///
+    /// Right now: Kanye West — "Runaway" main piano line, from the guitar tab.
+    /// Each cycle is three high notes answered by a lower one, descending
+    /// E → D# → C#, then A A G# E, looped `(x15)`, played on the Steinway grand.
+    /// Tune the tempo, the repeat count, or swap `voice` for another sound.
+    ///
+    ///   e|--12-12-12----11-11-11----9-9-9----5-5-4-12--|
+    ///   G|-----------9-----------8--------6------------|  (x15)
     public static var test: Pattern {
-        Pattern(tempo: 120, waveform: .voice) {
-            Note("C4", .quarter)
-            Note("D4", .quarter)
+        return Pattern(tempo: 80, voice: .steinwayGrand) {
+            // e: 12 12 12   →   G: 9   (E5 ×3, then E4)
+            Note("E5", .eighth)
+            Note("E5", .eighth)
+            Note("E5", .eighth)
             Note("E4", .quarter)
-            Note("G4", .quarter)
 
-            Rest(.eighth)
+            // e: 11 11 11   →   G: 8   (D#5 ×3, then D#4)
+            Note("D#5", .eighth)
+            Note("D#5", .eighth)
+            Note("D#5", .eighth)
+            Note("D#4", .quarter)
 
-            Chord(["C4", "E4", "G4"], .half)
+            // e: 9 9 9      →   G: 6   (C#5 ×3, then C#4)
+            Note("C#5", .eighth)
+            Note("C#5", .eighth)
+            Note("C#5", .eighth)
+            Note("C#4", .quarter)
 
+            // e: 5 5 4 12   (A4, A4, G#4, then back up to E5)
             Note("A4", .eighth)
-            Note("G4", .eighth)
-            Note("E4", .quarter)
-            Note("C4", .half, waveform: .sine)
+            Note("A4", .eighth)
+            Note("G#4", .eighth)
+            Note("E5", .quarter)
         }
     }
 }

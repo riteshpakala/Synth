@@ -1,6 +1,7 @@
 import Foundation
 
-/// Renders a `Pattern` into mono floating-point PCM samples.
+/// Renders a `Pattern` into mono floating-point PCM samples by delegating each
+/// note to its `Voice`.
 ///
 /// This is pure DSP with no audio-framework dependency, which makes it easy to
 /// unit-test or render offline. `SequencePlayer` feeds the result to the
@@ -28,27 +29,28 @@ public struct Synthesizer: Sendable {
                 samples.append(contentsOf: repeatElement(0, count: frames))
 
             case .tone(let keys, let velocity):
-                let waveform = step.waveform ?? pattern.waveform
-                // Independent phase accumulators keep each note in a chord
-                // free of discontinuities.
-                var phases = [Double](repeating: 0, count: keys.count)
-                let increments = keys.map { $0.frequency / sampleRate }
-                let mix = 1.0 / Double(max(keys.count, 1))
+                let voice = step.voice ?? pattern.voice
+                var mix = [Float](repeating: 0, count: frames)
 
-                for frame in 0..<frames {
-                    let env = pattern.envelope.amplitude(
-                        atFrame: frame,
-                        totalFrames: frames,
+                // Render each key with the voice, then sum and normalize so a
+                // chord doesn't clip.
+                for key in keys {
+                    let rendered = voice.render(
+                        frequency: key.frequency,
+                        duration: seconds,
+                        velocity: velocity,
                         sampleRate: sampleRate
                     )
-                    var value = 0.0
-                    for index in keys.indices {
-                        value += waveform.sample(phase: phases[index])
-                        phases[index] += increments[index]
-                        if phases[index] >= 1.0 { phases[index] -= 1.0 }
+                    for i in 0..<min(frames, rendered.count) {
+                        mix[i] += rendered[i]
                     }
-                    samples.append(Float(value * mix * velocity * env))
                 }
+
+                let normalize = Float(1.0 / Double(max(keys.count, 1)))
+                if normalize != 1 {
+                    for i in mix.indices { mix[i] *= normalize }
+                }
+                samples.append(contentsOf: mix)
             }
         }
 

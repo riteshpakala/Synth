@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "Synth",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         // Shared synthesis engine used by both the CLI and the GUI.

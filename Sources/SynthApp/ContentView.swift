@@ -41,13 +41,13 @@ struct ContentView: View {
             }
             .keyboardShortcut(.space, modifiers: [])
 
-            Picker("Waveform", selection: $model.waveform) {
-                ForEach(Waveform.allCases, id: \.self) { waveform in
-                    Text(waveform.rawValue.capitalized).tag(waveform)
+            Picker("Voice", selection: $model.voiceName) {
+                ForEach(VoiceLibrary.all, id: \.name) { voice in
+                    Text(voice.name).tag(voice.name)
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 200)
+            .frame(width: 240)
 
             HStack(spacing: 8) {
                 Text("Tempo")
