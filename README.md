@@ -1,116 +1,167 @@
 # Synth
 
-A base Swift package for playing tones through the speaker. It maps all 88 keys
-of a piano and lets you queue them in a declarative pattern. The intent is to
-grow this into a **manual vocal synthesizer**.
+A Swift port of the [Strudel](https://strudel.cc) live-coding pattern engine
+(the JavaScript port of [TidalCycles](https://tidalcycles.org)), playing
+through native macOS audio. Patterns are functions of rational time,
+mini-notation strings are parsed at runtime, and the original additive-synthesis
+voices (Steinway grand, oscillators) are available as sounds — the long-term
+goal remains a **manual vocal synthesizer**, and the ported vowel formant
+filter (`.vowel("a e i o")`) is the seam for it.
+
+```swift
+import Strudel
+
+installMiniNotation()
+
+let pattern = note("c3 [e3 g3]*2 <a3 b3>")
+    .s("sawtooth")
+    .lpf(800)
+    .every(4) { $0.rev() }
+    .jux { $0.add(12) }
+
+try StrudelPlayer().play(pattern, cps: 0.5)   // loops forever, like the REPL
+```
 
 ## Layout
 
 ```
 Package.swift
 Sources/
-  SynthCore/            ← shared engine (used by BOTH the CLI and the GUI)
-    PianoKey.swift        88-key mapping: number, MIDI, frequency, name
-    Voice.swift           ★ Voice protocol + VoiceLibrary registry (sound options) ★
-    OscillatorVoice.swift sine / triangle / square / sawtooth / synth-voice presets
-    SteinwayGrandPianoVoice.swift  additive, inharmonic grand-piano synthesis
-    Waveform.swift        raw oscillator shapes used by OscillatorVoice
-    Envelope.swift        ADSR amplitude envelope
-    NoteValue.swift       rhythmic durations (whole … thirty-second, dotted)
-    Pattern.swift         declarative DSL: Note / Chord / Rest + @PatternBuilder
-    Synthesizer.swift     renders a Pattern → PCM samples (pure DSP)
-    SequencePlayer.swift  plays a Pattern through the speaker (AVAudioEngine)
-    TestSequence.swift    ★ the SHARED, editable sequence both apps play ★
-  SynthCLI/
-    main.swift            terminal tool — plays sound and exits
-  SynthApp/
-    main.swift            launches the SwiftUI app
-    SynthApplication.swift / AppModel.swift / ContentView.swift
+  StrudelCore/          ← the pattern engine (port of strudel packages/core)
+    Fraction.swift        exact rational time
+    TimeSpan.swift        arcs of time
+    Hap.swift             events (whole/part/value/context)
+    Pattern.swift         Pattern = (State) -> [Hap], functor/applicative/monad
+    PatternConstructors.swift  pure, stack, cat, seq, polymeter…
+    PatternCombinators.swift   fast, slow, rev, every, jux, off, chop, iter…
+    PatternOps.swift      add/sub/mul/…/set/keep with in/out/mix/squeeze/… alignments
+    PatternStepwise.swift stepcat, pace, take/drop, extend, shrink/grow…
+    Signal.swift          sine, saw, rand, perlin, degrade, sometimes… (RNG is
+                          bit-exact with strudel.cc)
+    Euclid.swift          bjorklund / euclidean rhythms
+    Controls.swift        GENERATED: all 494 control functions (note, s, gain,
+                          lpf, vowel, delay, room, …)
+  StrudelMini/          ← mini-notation parser (port of the krill grammar)
+                          "c3 [e3 g3]*2 <a3 b3>", {a b c}%4, a(3,8), a?0.3, 0 .. 7 …
+  StrudelTonal/         ← scales, transpose, chords, voicings (port of packages/tonal)
+  StrudelAudio/         ← superdough-equivalent audio output
+    Cyclist.swift         the scheduler (port of cyclist.mjs)
+    Sounds.swift          sound registry: synths, noises + the classic voices
+    Sampler.swift         local sample folders: s("mysamples").n(3)
+    HapRenderer.swift     source → ADSR → filters (+envelopes) → vowel formants
+                          → shape/crush/coarse → gain/pan, delay + reverb tails
+    StrudelPlayer.swift   AVAudioEngine playback + offline rendering
+    Voice.swift & friends the original additive voices (steinway, synthvoice)
+  Strudel/              ← umbrella module (import Strudel)
+    TestPattern.swift     ★ the SHARED, editable pattern both apps play ★
+  SynthCLI/               terminal tool — plays a pattern and exits
+  SynthApp/               SwiftUI app: keyboard, sound picker, live mini-notation
+Tools/                    codegen + verification harness
 run-cli.sh                build + run the CLI
 run-app.sh                build + run the GUI
 ```
 
 ## The iteration loop
 
-1. Open `Package.swift` in Xcode to edit and iterate.
-2. Edit the shared sequence in
-   [Sources/SynthCore/TestSequence.swift](Sources/SynthCore/TestSequence.swift).
-3. Hear it from the terminal:
+1. Edit the shared pattern in
+   [Sources/Strudel/TestPattern.swift](Sources/Strudel/TestPattern.swift).
+2. Hear it from the terminal:
 
    ```sh
    ./run-cli.sh
    ```
 
-   The CLI renders the sequence, plays it through the speaker, and exits.
-
-The same `Pattern.test` is what the GUI's **Play Test Sequence** button plays,
-so there is exactly one place to edit.
+The same `testPattern()` is what the GUI's **Play** button loops, so there is
+exactly one place to edit. In the GUI you can also type mini-notation into the
+text field and press **Update** while playing — mini-notation is runtime-parsed,
+so this is live-codable without recompiling.
 
 ## CLI usage
 
 ```sh
-./run-cli.sh                             # play the shared test sequence
-./run-cli.sh C4 E4 G4 C5                 # play specific notes
-./run-cli.sh -v steinway -t 90 A4 B4     # choose voice + tempo
-./run-cli.sh --list-voices               # list available sounds
-./run-cli.sh --list                      # list all 88 keys with frequencies
+./run-cli.sh                                  # play the shared test pattern
+./run-cli.sh 'c3 e3 g3 c4'                    # play mini-notation as notes
+./run-cli.sh -s sawtooth 'c2 [e2 g2]*2'       # choose a sound
+./run-cli.sh --cycles 4 --cpm 60 'c3(3,8)'    # cycles + tempo
+./run-cli.sh --render out.wav 'c3 e3'         # write a WAV instead of playing
+./run-cli.sh --samples ~/samples 'bd*4'       # load a sample folder
+./run-cli.sh --list-sounds
 ./run-cli.sh --help
 ```
 
-## GUI
-
-```sh
-./run-app.sh
-```
-
-Click any key to sound it, pick a voice, set the tempo, or play the shared
-test sequence (Space).
-
-## Sounds (voices)
-
-A **voice** is a selectable sound — the thing that turns a note into audio. It
-owns its own waveform/spectrum and envelope, so different voices can synthesize
-in completely different ways behind one interface. Built-in voices:
-
-- `Sine`, `Triangle`, `Square`, `Sawtooth` — basic oscillators
-- `Synth Voice` — an additive harmonic stack (seed for the vocal synth)
-- `Steinway Grand Piano` — additive, inharmonic grand-piano synthesis (default)
-
-### Adding a voice (extension point)
-
-1. Conform a type to [`Voice`](Sources/SynthCore/Voice.swift) and implement
-   `render(frequency:duration:velocity:sampleRate:)`.
-2. Add a preset in a `extension Voice where Self == YourVoice { … }` block (so
-   it's usable as `.yourVoice`).
-3. List it in `VoiceLibrary.all` — it then appears in the CLI (`--list-voices`,
-   `-v`) and the GUI picker automatically.
-
-This is how future vocal styles will plug in.
-
 ## Writing patterns
 
+Double-quoted strings in pattern positions are **mini-notation** — the full
+krill grammar is supported:
+
+| syntax | meaning |
+|---|---|
+| `"a b c"` | sequence within one cycle |
+| `"a [b c]"` | sub-sequences |
+| `"<a b>"` | one per cycle |
+| `"{a b c, d e}%4"` | polymeter |
+| `"a,e,g"` | stack (chord) |
+| `"a\|b"` | random choice per cycle |
+| `"a@3 b"`, `"a _ _ b"` | weights / elongation |
+| `"a!3"` | replicate |
+| `"a*2 b/2"` | fast / slow |
+| `"a(3,8,1)"` | euclidean rhythm |
+| `"a?0.3"` | degrade (random dropout) |
+| `"bd:3"` | sample index (lists) |
+| `"0 .. 7"` | ranges |
+
+The combinator library is the strudel API in Swift: `fast, slow, rev, iter,
+every, when, off, jux, echo, ply, chop, striate, euclid, degradeBy, sometimes,
+palindrome, linger, zoom, compress, segment, range, add.mix(...), struct,
+mask, scale, transpose, voicing…` plus all controls (`note, n, s, gain, pan,
+attack, decay, sustain, release, lpf, hpf, vowel, delay, room, shape, crush,
+coarse, speed, begin, end, …`).
+
 ```swift
-import SynthCore
-
-let pattern = Pattern(tempo: 120, voice: .steinwayGrand) {
-    Note("C4", .quarter)
-    Chord(["C4", "E4", "G4"], .half)
-    Rest(.eighth)
-    for name in ["D4", "E4", "F4"] {
-        Note(name, .eighth)
-    }
-    Note("C4", .half, voice: .sine)   // per-note voice override
-}
-
-try SequencePlayer().playAndWait(pattern)   // blocks until finished (CLI)
-// or
-try SequencePlayer().play(pattern)          // fire-and-forget (GUI)
+n("0 2 4 <6 7>").scale("C:minor").s("triangle").room(0.3)
+s("white*8").decay(0.05).sustain(0).degradeBy(0.3)
+note("c2 e2").s("sawtooth").vowel("<a e i o>")     // formant filtering
+"<C^7 A7 Dm7 G7>".voicing()                        // (via pure(...).voicing())
 ```
 
-## Toward a vocal synth
+## Sounds
 
-The `Voice` protocol is the seam for vocal styles: a future `VocalVoice` would
-do formant-based vowel synthesis (sculpting the harmonics in `Synth Voice` with
-formant filtering and per-note vowel parameters) and slot into `VoiceLibrary`
-alongside the piano.
-```
+`--list-sounds` / the GUI picker show the registry: `sine, square, triangle,
+sawtooth` (+ aliases), `white, pink, brown, crackle` noises, and the classic
+additive voices `steinway` (default) and `synthvoice`. Add your own:
+
+1. Conform to [`SoundSource`](Sources/StrudelAudio/Sounds.swift) (or the older
+   [`Voice`](Sources/StrudelAudio/Voice.swift) protocol and wrap in `VoiceSound`),
+2. `registerSound("myname", mySound)` — it's then playable as `s("myname")`.
+
+Sample folders load with `SampleLoader.loadDirectory(...)` (CLI: `--samples`).
+
+## Fidelity notes
+
+Delay and reverb run as **shared per-orbit buses** (like superdough's orbits):
+every hap sends into its orbit's continuously-running feedback delay and
+Freeverb, whose parameters update at hap onsets — live via per-orbit
+`AVAudioSourceNode`s, offline via the same streaming DSP. The distortion
+algorithms (`soft`, `hard`, `cubic`, `diode`, `asym`, `fold`, `sinefold`,
+`chebyshev`), phaser, compressor, ZzFX synths (`z_sine` … `z_noise`), custom
+additive waveforms (`s("user").partials([...])`, `.phases`), wavetables
+(`wt_` sample banks with `wt`/`wtenv` position sweeps), and the
+chord-voicings voice-leading (`.voicings("lefthand")`) are all ported and
+tested against the JS implementations. Remaining niche gaps: superdough's
+supersaw/pulse worklet oscillators, the phase vocoder (`stretch`), Kabelsalat
+worklets (`K`), and the modulator bus (`bmod`/`lfo` object configs).
+
+## Verification
+
+The engine is tested against strudel itself: unit tests port strudel's own
+test expectations, the RNG is verified bit-exact, and
+`Tools/differential` (see Tools/README.md) diffs `queryArc` output between
+this port and the JS package running under node.
+
+## License & attribution
+
+This project is a Swift port of [Strudel](https://codeberg.org/uzu/strudel)
+(AGPL-3.0-or-later, © Strudel contributors), which itself ports
+[TidalCycles](https://tidalcycles.org) by Alex McLean and contributors. Scale
+data derives from [tonaljs](https://github.com/tonaljs/tonal) (MIT). The whole
+repository is licensed **AGPL-3.0-or-later** — see [LICENSE](LICENSE).

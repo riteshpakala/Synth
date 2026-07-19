@@ -1,5 +1,5 @@
+import Strudel
 import SwiftUI
-import SynthCore
 
 struct ContentView: View {
     @StateObject private var model = AppModel()
@@ -8,6 +8,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             header
             controls
+            livePattern
             PianoKeyboardView { key in
                 model.play(key: key)
             }
@@ -21,7 +22,7 @@ struct ContentView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Synth").font(.title).bold()
-                Text("Click a key, or play the shared test sequence.")
+                Text("Strudel patterns in Swift — click a key, or play a pattern.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -35,28 +36,47 @@ struct ContentView: View {
     private var controls: some View {
         HStack(spacing: 16) {
             Button {
-                model.playTestSequence()
+                model.togglePlayback()
             } label: {
-                Label("Play Test Sequence", systemImage: "play.fill")
+                Label(model.isPlaying ? "Stop" : "Play",
+                      systemImage: model.isPlaying ? "stop.fill" : "play.fill")
             }
             .keyboardShortcut(.space, modifiers: [])
 
-            Picker("Voice", selection: $model.voiceName) {
-                ForEach(VoiceLibrary.all, id: \.name) { voice in
-                    Text(voice.name).tag(voice.name)
+            Picker("Sound", selection: $model.soundName) {
+                ForEach(model.availableSounds, id: \.self) { name in
+                    Text(name).tag(name)
                 }
             }
             .pickerStyle(.menu)
             .frame(width: 240)
+            .onChange(of: model.soundName) { _ in model.applyLiveEdits() }
 
             HStack(spacing: 8) {
                 Text("Tempo")
-                Slider(value: $model.tempo, in: 40...240, step: 1)
+                Slider(value: $model.cpm, in: 2...120, step: 1)
                     .frame(width: 160)
-                Text("\(Int(model.tempo)) BPM")
+                    .onChange(of: model.cpm) { _ in model.applyLiveEdits() }
+                Text("\(Int(model.cpm)) cpm")
                     .font(.caption.monospaced())
                     .frame(width: 64, alignment: .leading)
             }
+        }
+    }
+
+    /// Mini-notation is parsed at runtime, so edits apply while playing.
+    private var livePattern: some View {
+        HStack(spacing: 8) {
+            TextField(
+                "mini-notation, e.g.  c3 [e3 g3]*2 <a3 b3>   (empty = test pattern)",
+                text: $model.miniCode
+            )
+            .font(.body.monospaced())
+            .textFieldStyle(.roundedBorder)
+            .onSubmit { model.applyLiveEdits() }
+
+            Button("Update") { model.applyLiveEdits() }
+                .disabled(!model.isPlaying)
         }
     }
 }

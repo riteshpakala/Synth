@@ -1,0 +1,19 @@
+a b c
+a [b c] d
+<a b> c
+{a b c, d e}%4
+a(3,8)
+a(3,8,2)
+a*2 [b c]/2
+a@3 b
+a!3 b
+a . b c . d
+a, b c, d e f
+a | b | c
+0 .. 7
+bd:3 sd:2
+a? b?0.3 c? d?
+[a b]*2 <c d>!2
+a b . c
+~ a ~ b
+c3 [e3,g3] <a3 b3> c4

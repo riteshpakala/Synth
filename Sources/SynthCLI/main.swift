@@ -1,37 +1,43 @@
 import Foundation
-import SynthCore
+import Strudel
 
-// The CLI tool. By default it plays the shared `Pattern.test` sequence and
-// exits once the sound has finished. Pass note names to play them instead.
+// The CLI tool. By default it renders and plays the shared test pattern and
+// exits when the sound finishes. Pass mini-notation to play that instead.
 //
-//   swift run synth-cli                          # play the shared test sequence
-//   swift run synth-cli C4 E4 G4 C5              # play these notes
-//   swift run synth-cli -v steinway -t 90 A4 B4  # pick a voice + tempo
-//   swift run synth-cli --list-voices            # list available sounds
-//   swift run synth-cli --list                   # list all 88 keys
+//   swift run synth-cli                             # play the shared test pattern
+//   swift run synth-cli 'c3 e3 g3 c4'               # play mini-notation as notes
+//   swift run synth-cli -s sawtooth 'c2 [e2 g2]*2'  # choose a sound
+//   swift run synth-cli --cycles 4 --cpm 60 'c3*4'  # cycles + tempo
+//   swift run synth-cli --render out.wav 'c3 e3'    # write a WAV instead of playing
+//   swift run synth-cli --list-sounds               # list available sounds
 //   swift run synth-cli --help
 
 func printUsage() {
     print("""
-    synth-cli — play tones through the speaker
+    synth-cli — play strudel patterns through the speaker
 
     USAGE:
-        synth-cli [options] [notes...]
+        synth-cli [options] [mini-notation]
 
-    With no notes, plays the shared Pattern.test sequence
-    (edit Sources/SynthCore/TestSequence.swift to change it).
+    With no pattern, plays the shared test pattern
+    (edit Sources/Strudel/TestPattern.swift to change it).
 
-    NOTES:
-        Note names like C4, F#5, Eb3, A4. Each plays as a quarter note.
+    The pattern argument is strudel mini-notation, interpreted as notes:
+        'c3 [e3 g3]*2 <a3 b3>'   'c3,e3,g3'   'c3(3,8)'
 
     OPTIONS:
-        -v, --voice <name>   sound to use; see --list-voices (default: \(VoiceLibrary.default.name))
-        -t, --tempo <bpm>    beats per minute (default: 120)
-        -l, --list           list all 88 keys with frequencies, then exit
-            --list-voices    list available voices, then exit
-        -h, --help           show this help, then exit
+        -s, --sound <name>    sound to use (default: steinway); see --list-sounds
+        -c, --cycles <n>      number of cycles to play (default: 2)
+            --cps <x>         cycles per second (default: \(String(format: "%.3f", testCps)))
+            --cpm <x>         cycles per minute (overrides --cps)
+            --render <file>   write a WAV file instead of playing
+            --samples <dir>   load a folder of samples into the registry
+            --list-sounds     list available sounds, then exit
+        -h, --help            show this help, then exit
     """)
 }
+
+installMiniNotation()
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 
@@ -40,76 +46,93 @@ if arguments.contains("-h") || arguments.contains("--help") {
     exit(0)
 }
 
-if arguments.contains("--list-voices") {
-    print("Available voices:")
-    for voice in VoiceLibrary.all {
-        let marker = voice.name == VoiceLibrary.default.name ? " (default)" : ""
-        print("  \(voice.name)\(marker)")
-    }
-    exit(0)
-}
-
-if arguments.contains("-l") || arguments.contains("--list") {
-    print("#\tNote\tFrequency")
-    for key in PianoKey.all {
-        print("\(key.number)\t\(key.name)\t\(String(format: "%7.2f", key.frequency)) Hz")
-    }
-    exit(0)
-}
-
-// Parse options and collect bare note tokens.
-var voice: any Voice = VoiceLibrary.default
-var tempo = 120.0
-var noteTokens: [String] = []
+var soundName = "steinway"
+var cycles = 2.0
+var cps = testCps
+var renderPath: String? = nil
+var patternTokens: [String] = []
+var listSounds = false
 
 var index = 0
 while index < arguments.count {
     let argument = arguments[index]
     switch argument {
-    case "-v", "--voice":
+    case "-s", "--sound":
         index += 1
-        if index < arguments.count, let parsed = VoiceLibrary.named(arguments[index]) {
-            voice = parsed
-        } else {
-            FileHandle.standardError.write(Data("Unknown voice. Try --list-voices.\n".utf8))
-            exit(2)
-        }
-    case "-t", "--tempo":
+        guard index < arguments.count else { fail("missing sound name") }
+        soundName = arguments[index]
+    case "-c", "--cycles":
         index += 1
-        if index < arguments.count, let parsed = Double(arguments[index]), parsed > 0 {
-            tempo = parsed
-        } else {
-            FileHandle.standardError.write(Data("Invalid tempo.\n".utf8))
-            exit(2)
+        guard index < arguments.count, let parsed = Double(arguments[index]), parsed > 0 else {
+            fail("invalid cycle count")
         }
+        cycles = parsed
+    case "--cps":
+        index += 1
+        guard index < arguments.count, let parsed = Double(arguments[index]), parsed > 0 else {
+            fail("invalid cps")
+        }
+        cps = parsed
+    case "--cpm":
+        index += 1
+        guard index < arguments.count, let parsed = Double(arguments[index]), parsed > 0 else {
+            fail("invalid cpm")
+        }
+        cps = parsed / 60
+    case "--render":
+        index += 1
+        guard index < arguments.count else { fail("missing output file") }
+        renderPath = arguments[index]
+    case "--samples":
+        index += 1
+        guard index < arguments.count else { fail("missing samples directory") }
+        do {
+            try SampleLoader.loadDirectory(URL(fileURLWithPath: arguments[index]))
+        } catch {
+            fail("could not load samples: \(error)")
+        }
+    case "--list-sounds":
+        listSounds = true
     default:
-        noteTokens.append(argument)
+        patternTokens.append(argument)
     }
     index += 1
 }
 
-// Build the pattern: explicit notes if given, otherwise the shared sequence.
-let pattern: Pattern
-if noteTokens.isEmpty {
-    print("♪ Playing the shared test sequence (\(String(format: "%.1f", Pattern.test.duration))s)…")
-    pattern = .test
-} else {
-    var keys: [PianoKey] = []
-    for token in noteTokens {
-        guard let key = PianoKey(name: token) else {
-            FileHandle.standardError.write(Data("'\(token)' is not a valid note name.\n".utf8))
-            exit(2)
-        }
-        keys.append(key)
+func fail(_ message: String) -> Never {
+    FileHandle.standardError.write(Data("\(message)\n".utf8))
+    exit(2)
+}
+
+if listSounds {
+    print("Available sounds:")
+    for name in SoundRegistry.shared.names {
+        print("  \(name)")
     }
-    print("♪ Playing \(keys.count) note(s) on \(voice.name) @ \(Int(tempo)) BPM…")
-    pattern = Pattern(tempo: tempo, voice: voice, steps: keys.map { Note($0, .quarter) })
+    exit(0)
+}
+
+// Build the pattern: mini-notation if given, otherwise the shared test pattern.
+let pattern: StrudelCore.Pattern
+if patternTokens.isEmpty {
+    print("♪ Playing the shared test pattern (\(String(format: "%.1f", cycles / cps))s)…")
+    pattern = testPattern()
+} else {
+    let mini = patternTokens.joined(separator: " ")
+    print("♪ Playing \"\(mini)\" on \(soundName)…")
+    pattern = note(.string(mini)).s(.string(soundName))
 }
 
 do {
-    let player = SequencePlayer()
-    try player.playAndWait(pattern)
-    print("✓ Done.")
+    let player = StrudelPlayer()
+    if let renderPath {
+        let url = URL(fileURLWithPath: renderPath)
+        try player.renderToFile(pattern, cycles: cycles, cps: cps, url: url)
+        print("✓ Rendered \(cycles) cycle(s) to \(renderPath).")
+    } else {
+        try player.renderAndPlay(pattern, cycles: cycles, cps: cps)
+        print("✓ Done.")
+    }
 } catch {
     FileHandle.standardError.write(Data("Audio error: \(error)\n".utf8))
     exit(1)

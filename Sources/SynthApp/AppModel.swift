@@ -1,42 +1,68 @@
 import Foundation
+import Strudel
 import SwiftUI
-import SynthCore
 
-/// Holds GUI state and drives the shared `SequencePlayer`.
+/// Holds GUI state and drives the shared `StrudelPlayer`.
 @MainActor
 final class AppModel: ObservableObject {
-    /// Selected sound, tracked by name so the SwiftUI `Picker` has a `Hashable`
-    /// value to bind to (existentials aren't directly bindable).
-    @Published var voiceName: String = VoiceLibrary.default.name
-    @Published var tempo: Double = 120
+    @Published var soundName: String = "steinway"
+    /// Cycles per minute (the strudel-native tempo unit).
+    @Published var cpm: Double = testCps * 60
     @Published var lastPlayed: String = "—"
+    @Published var isPlaying = false
+    /// Live-editable mini-notation; empty means "play the test pattern".
+    @Published var miniCode: String = ""
+    @Published var parseError: String? = nil
 
-    private let player = SequencePlayer()
+    private let player = StrudelPlayer()
 
-    /// The currently selected voice.
-    var voice: any Voice {
-        VoiceLibrary.all.first { $0.name == voiceName } ?? VoiceLibrary.default
+    var availableSounds: [String] { SoundRegistry.shared.names }
+
+    init() {
+        installMiniNotation()
     }
 
-    /// Plays the shared `Pattern.test` sequence — the same one the CLI plays.
-    func playTestSequence() {
-        lastPlayed = "test sequence"
-        submit(SynthCore.Pattern.test)
+    /// The pattern to play: the mini code if present, else the test pattern.
+    private func currentPattern() -> StrudelCore.Pattern {
+        guard !miniCode.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return testPattern()
+        }
+        return note(.string(miniCode)).s(.string(soundName))
     }
 
-    /// Plays a single key with the currently selected voice and tempo.
+    /// Starts/stops looping playback of the current pattern.
+    func togglePlayback() {
+        if isPlaying {
+            player.hush()
+            isPlaying = false
+            lastPlayed = "stopped"
+        } else {
+            do {
+                try player.play(currentPattern(), cps: cpm / 60)
+                isPlaying = true
+                lastPlayed = miniCode.isEmpty ? "test pattern" : "live pattern"
+            } catch {
+                lastPlayed = "audio error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Applies edits to the running pattern without stopping the clock —
+    /// mini-notation is runtime-parsed, so this is live-codable.
+    func applyLiveEdits() {
+        parseError = nil
+        guard isPlaying else { return }
+        player.setPattern(currentPattern())
+        player.setCps(cpm / 60)
+        lastPlayed = "updated"
+    }
+
+    /// Plays a single key with the currently selected sound.
     func play(key: PianoKey) {
         lastPlayed = key.name
-        submit(SynthCore.Pattern.single(key, value: .quarter, tempo: tempo, voice: voice))
-    }
-
-    // `Pattern` is qualified because AppKit re-exports a C `struct Pattern`
-    // (Quickdraw) that would otherwise be ambiguous in this target.
-    private func submit(_ pattern: SynthCore.Pattern) {
-        do {
-            try player.play(pattern)
-        } catch {
-            lastPlayed = "audio error: \(error.localizedDescription)"
-        }
+        player.playOnce(.map([
+            "note": .number(Double(key.midiNoteNumber)),
+            "s": .string(soundName),
+        ]))
     }
 }
