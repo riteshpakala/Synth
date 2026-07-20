@@ -43,15 +43,30 @@ struct PlayerView: View {
         SynthCard(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel("Tunables")
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 210), spacing: 14)],
-                    alignment: .leading, spacing: 12
-                ) {
-                    ForEach(model.tunables) { tunable in
-                        TunableSlider(tunable: tunable) { newValue in
-                            model.setTunable(tunable, to: newValue)
-                        }
+                // Dense patterns can produce more sliders than fit — the grid
+                // scrolls within the card so everything stays reachable.
+                // (ImageRenderer can't rasterize NSScrollView; the README
+                // capture renders the bare grid.)
+                if model.isScreenshot {
+                    tunablesGrid
+                } else {
+                    ScrollView {
+                        tunablesGrid
                     }
+                    .frame(maxHeight: 236)
+                }
+            }
+        }
+    }
+
+    private var tunablesGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 210), spacing: 14)],
+            alignment: .leading, spacing: 12
+        ) {
+            ForEach(model.tunables) { tunable in
+                TunableSlider(tunable: tunable) { newValue in
+                    model.setTunable(tunable, to: newValue)
                 }
             }
         }
@@ -146,10 +161,10 @@ struct PlayerView: View {
                 Divider().frame(height: 22)
 
                 SectionLabel("Tempo")
-                GoldSlider(value: $model.cpm, range: 10...240, step: 1)
+                GoldSlider(value: $model.bpm, range: 30...240, step: 1)
                     .frame(maxWidth: 220)
-                    .onChange(of: model.cpm) { _ in model.tempoChanged() }
-                Text("\(Int(model.cpm)) cpm")
+                    .onChange(of: model.bpm) { _ in model.tempoChanged() }
+                Text("\(Int(model.bpm)) bpm")
                     .font(.synthMono(11))
                     .foregroundStyle(Color.synthInk.opacity(0.6))
                     .frame(width: 60, alignment: .leading)

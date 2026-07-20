@@ -14,21 +14,41 @@ public final class StrudelPlayer: @unchecked Sendable {
     private let format: AVAudioFormat
     public let sampleRate: Double
 
-    /// Pool of players for polyphonic voice scheduling.
+    /// Pool of players for polyphonic voice scheduling. `inUse` is FIFO so
+    /// the oldest voice can be stolen when the pool is exhausted.
     private var pool: [AVAudioPlayerNode] = []
     private var available: [AVAudioPlayerNode] = []
+    private var inUse: [ObjectIdentifier: AVAudioPlayerNode] = [:]
+    private var inUseOrder: [ObjectIdentifier] = []
     private let poolLock = NSLock()
 
     private var cyclist: Cyclist?
-    /// Host-time anchor mapping scheduler seconds → engine sample time.
+    /// Anchor pair taken from a valid render time at start: maps scheduler
+    /// seconds to BOTH the host clock (for player scheduling) and the output
+    /// sample timeline (for orbit ring writes) — one clock for everything.
+    private var anchorHostTime: UInt64 = 0
     private var anchorSampleTime: AVAudioFramePosition = 0
     private var startHostSeconds: Double = 0
+
+    /// mach host ticks per second (for host-time scheduling).
+    private static let hostTicksPerSecond: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return 1_000_000_000 * Double(info.denom) / Double(info.numer)
+    }()
+
+    /// LRU cache of rendered hap buffers — loops repeat the same haps every
+    /// cycle, so steady-state scheduling costs ~nothing after cycle one.
+    private var renderCache: [String: (buffer: AVAudioPCMBuffer, rendered: RenderedHap)] = [:]
+    private var renderCacheOrder: [String] = []
+    private let renderCacheLock = NSLock()
+    private let renderCacheLimit = 192
 
     /// Shared per-orbit delay/reverb buses (superdough orbits).
     private var orbits: [Int: OrbitBus] = [:]
     private let orbitLock = NSLock()
 
-    public init(sampleRate: Double = 44_100, voices: Int = 48) {
+    public init(sampleRate: Double = 44_100, voices: Int = 64) {
         self.sampleRate = sampleRate
         self.format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
         for _ in 0..<voices {
@@ -59,11 +79,10 @@ public final class StrudelPlayer: @unchecked Sendable {
 
     /// Starts playing the pattern at the given tempo (cycles per second).
     public func play(_ pattern: StrudelCore.Pattern, cps: Double = 0.5) throws {
-        stop()
+        hush()
         try startEngine()
-
+        try captureAnchor()
         startHostSeconds = now()
-        anchorSampleTime = engine.mainMixerNode.lastRenderTime?.sampleTime ?? 0
 
         let cyclist = Cyclist(
             getTime: { [weak self] in (self?.now() ?? 0) - (self?.startHostSeconds ?? 0) },
@@ -100,10 +119,22 @@ public final class StrudelPlayer: @unchecked Sendable {
         cyclist = nil
     }
 
-    /// Stops everything immediately.
+    /// Stops everything immediately: scheduler, every voice (including
+    /// buffers scheduled but not yet started), and the orbit buses' pending
+    /// send audio + effect state. Only audio already played decays naturally.
     public func hush() {
         stop()
-        for node in pool { node.stop() }
+        poolLock.lock()
+        let playing = Array(inUse.values)
+        inUse.removeAll()
+        inUseOrder.removeAll()
+        available = pool
+        poolLock.unlock()
+        for node in playing { node.stop() }
+        orbitLock.lock()
+        let buses = Array(orbits.values)
+        orbitLock.unlock()
+        for bus in buses { bus.clear() }
     }
 
     /// Fires a single hap value right now (GUI keyboard, one-shots).
@@ -135,11 +166,11 @@ public final class StrudelPlayer: @unchecked Sendable {
             custom(hap, 0, duration, cps, targetTime)
             if hap.context.dominantTrigger == true { return }
         }
-        guard let rendered = HapRenderer.render(value: hap.value, duration: duration,
-                                                cps: cps, sampleRate: sampleRate),
-              let buffer = makeBuffer(rendered) else { return }
-        guard let node = takeNode() else { return }
+        guard let (buffer, rendered) = renderedBuffer(value: hap.value, duration: duration, cps: cps),
+              let node = takeNode() else { return }
 
+        // One clock for everything: player buffers on the host timeline, orbit
+        // ring writes on the sample timeline, both from the same anchor pair.
         let sampleTime = anchorSampleTime + AVAudioFramePosition(targetTime * sampleRate)
         if rendered.delaySend != nil || rendered.reverbSend != nil {
             orbitBus(rendered.orbit).write(
@@ -151,9 +182,47 @@ public final class StrudelPlayer: @unchecked Sendable {
                 roomSize: rendered.roomSize
             )
         }
-        let when = AVAudioTime(sampleTime: sampleTime, atRate: sampleRate)
-        node.scheduleBuffer(buffer, at: when) { [weak self] in self?.returnNode(node) }
+        let hostTime = anchorHostTime
+            + UInt64(max(0, targetTime) * StrudelPlayer.hostTicksPerSecond)
+        node.scheduleBuffer(buffer, at: AVAudioTime(hostTime: hostTime)) { [weak self] in
+            self?.returnNode(node)
+        }
         node.play()
+    }
+
+    var engineForTesting: AVAudioEngine { engine }
+
+    func renderedBufferForTesting(value: PatternValue, duration: Double,
+                                  cps: Double) -> (AVAudioPCMBuffer, RenderedHap)? {
+        renderedBuffer(value: value, duration: duration, cps: cps)
+    }
+
+    /// Renders a hap's buffer, memoized on (value, duration, cps).
+    private func renderedBuffer(value: PatternValue, duration: Double,
+                                cps: Double) -> (AVAudioPCMBuffer, RenderedHap)? {
+        let key = "\(value)|\(duration)|\(cps)"
+        renderCacheLock.lock()
+        if let hit = renderCache[key] {
+            renderCacheLock.unlock()
+            return hit
+        }
+        renderCacheLock.unlock()
+
+        guard let rendered = HapRenderer.render(value: value, duration: duration,
+                                                cps: cps, sampleRate: sampleRate),
+              let buffer = makeBuffer(rendered) else { return nil }
+
+        renderCacheLock.lock()
+        if renderCache[key] == nil {
+            renderCache[key] = (buffer, rendered)
+            renderCacheOrder.append(key)
+            if renderCacheOrder.count > renderCacheLimit {
+                let evicted = renderCacheOrder.removeFirst()
+                renderCache.removeValue(forKey: evicted)
+            }
+        }
+        renderCacheLock.unlock()
+        return (buffer, rendered)
     }
 
     // MARK: - Offline rendering
@@ -300,8 +369,28 @@ public final class StrudelPlayer: @unchecked Sendable {
     private func startEngine() throws {
         if !engine.isRunning {
             try engine.start()
-            anchorSampleTime = engine.mainMixerNode.lastRenderTime?.sampleTime ?? 0
         }
+    }
+
+    /// Waits (briefly) for the engine to produce a valid render time, then
+    /// stores the (hostTime, sampleTime) anchor pair that maps scheduler
+    /// second 0 onto both clocks.
+    private func captureAnchor() throws {
+        var renderTime: AVAudioTime? = engine.mainMixerNode.lastRenderTime
+        var waited = 0.0
+        while (renderTime == nil || renderTime?.isSampleTimeValid != true
+               || renderTime?.isHostTimeValid != true), waited < 0.5 {
+            usleep(5_000)
+            waited += 0.005
+            renderTime = engine.mainMixerNode.lastRenderTime
+        }
+        guard let rt = renderTime, rt.isSampleTimeValid, rt.isHostTimeValid else {
+            throw NSError(domain: "StrudelPlayer", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "audio engine produced no render time",
+            ])
+        }
+        anchorHostTime = rt.hostTime
+        anchorSampleTime = rt.sampleTime
     }
 
     private func makeBuffer(_ rendered: RenderedHap) -> AVAudioPCMBuffer? {
@@ -317,12 +406,32 @@ public final class StrudelPlayer: @unchecked Sendable {
     }
 
     private func takeNode() -> AVAudioPlayerNode? {
-        poolLock.lock(); defer { poolLock.unlock() }
-        return available.popLast()
+        poolLock.lock()
+        if let node = available.popLast() {
+            let id = ObjectIdentifier(node)
+            inUse[id] = node
+            inUseOrder.append(id)
+            poolLock.unlock()
+            return node
+        }
+        // Pool exhausted: steal the oldest playing voice rather than
+        // dropping the new note.
+        guard let oldestId = inUseOrder.first, let node = inUse[oldestId] else {
+            poolLock.unlock()
+            return nil
+        }
+        inUseOrder.removeFirst()
+        inUseOrder.append(oldestId)
+        poolLock.unlock()
+        node.stop()
+        return node
     }
 
     private func returnNode(_ node: AVAudioPlayerNode) {
         poolLock.lock(); defer { poolLock.unlock() }
+        let id = ObjectIdentifier(node)
+        guard inUse.removeValue(forKey: id) != nil else { return }
+        inUseOrder.removeAll { $0 == id }
         available.append(node)
     }
 }

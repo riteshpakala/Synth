@@ -886,6 +886,15 @@ public func xfade(_ a: PatternValue, _ pos: PatternValue, _ b: PatternValue) -> 
 }
 
 /// Combines patterns over multiple cycles: each section is [cycles, pattern].
+public func arrange(_ sections: [(Int, PatternValue)]) -> Pattern {
+    let total = sections.reduce(0) { $0 + $1.0 }
+    guard total > 0 else { return silence }
+    let stretched = sections.map { (cycles, section) in
+        (Fraction(cycles), reify(section)._fast(Fraction(cycles)))
+    }
+    return stepcat(stretched.map { (t, p) in (t, PatternValue.pattern(p)) })._slow(Fraction(total))
+}
+
 public func arrange(_ sections: (Int, PatternValue)...) -> Pattern {
     let total = sections.reduce(0) { $0 + $1.0 }
     let stretched = sections.map { (cycles, section) in

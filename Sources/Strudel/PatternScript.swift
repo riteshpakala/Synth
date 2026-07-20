@@ -52,11 +52,17 @@ public enum PatternScript {
         return prefix + formatted + suffix
     }
 
+    /// Formats a slider value as a literal the parser can always read back:
+    /// plain decimal notation only (never scientific, which %g emits for
+    /// tiny values and the grammar doesn't accept).
     public static func format(_ value: Double, isInt: Bool) -> String {
-        if isInt || value == value.rounded() {
+        if isInt || Swift.abs(value - value.rounded()) < 1e-9 {
             return String(Int(value.rounded()))
         }
-        return String(format: "%.3g", value)
+        var s = String(format: "%.4f", value)
+        while s.hasSuffix("0") { s.removeLast() }
+        if s.hasSuffix(".") { s.removeLast() }
+        return s
     }
 }
 
@@ -468,6 +474,19 @@ final class ScriptEvaluator {
                 throw PatternScriptError(message: "mini() expects a string", position: 0)
             }
             return .value(.pattern(try StrudelMini.mini(s)))
+        case "arrange":
+            // arrange([8, versePattern], [8, chorusPattern], …)
+            var sections: [(Int, PatternValue)] = []
+            for arg in args {
+                let v = try evaluate(arg, dollar: dollar).asPatternValue()
+                guard let list = v.listValue, list.count == 2,
+                      let cycles = list[0].intValue else {
+                    throw PatternScriptError(
+                        message: "arrange expects [cycles, pattern] pairs", position: 0)
+                }
+                sections.append((cycles, list[1]))
+            }
+            return .value(.pattern(arrange(sections)))
         case "run":
             let v = try evaluate(args[0], dollar: dollar).asPatternValue()
             return .value(.pattern(run(v)))

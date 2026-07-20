@@ -52,6 +52,20 @@ final class OrbitBus {
         }
     }
 
+    /// Silences the bus: drops all pending (not yet played) send audio and
+    /// resets the effect state so nothing new sounds after a hush.
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        for i in 0..<capacity {
+            delayRing[i] = 0
+            reverbRing[i] = 0
+        }
+        delay.reset()
+        reverbL.reset()
+        reverbR.reset()
+    }
+
     /// Mixes send audio into the rings at the given absolute sample position.
     func write(delaySend: [Float]?, reverbSend: [Float]?, atSample: Int64,
                delayTime: Double, delayFeedback: Double, roomSize: Double) {
@@ -77,6 +91,12 @@ final class OrbitBus {
                 reverbRing[(base + i) % capacity] += send[i]
             }
         }
+    }
+
+    func renderBlockForTesting(startSample: Int64, frameCount: Int,
+                               left: UnsafeMutablePointer<Float>,
+                               right: UnsafeMutablePointer<Float>) {
+        renderBlock(startSample: startSample, frameCount: frameCount, left: left, right: right)
     }
 
     private func renderBlock(startSample: Int64, frameCount: Int,

@@ -387,6 +387,10 @@ final class StreamingDelay {
         delaySamples = Swift.max(1, Swift.min(Int(seconds * sampleRate), buffer.count - 1))
     }
 
+    func reset() {
+        for i in buffer.indices { buffer[i] = 0 }
+    }
+
     func process(_ input: Float) -> Float {
         let readIndex = (writeIndex - delaySamples + buffer.count) % buffer.count
         let delayed = buffer[readIndex]
@@ -423,6 +427,16 @@ final class StreamingFreeverb {
 
     func setSize(_ size: Double) {
         roomsize = 0.7 + Swift.min(Swift.max(size, 0), 1) * 0.28
+    }
+
+    func reset() {
+        for c in combBuffers.indices {
+            for i in combBuffers[c].indices { combBuffers[c][i] = 0 }
+            combStore[c] = 0
+        }
+        for a in allpassBuffers.indices {
+            for i in allpassBuffers[a].indices { allpassBuffers[a][i] = 0 }
+        }
     }
 
     func process(_ input: Float) -> Float {
