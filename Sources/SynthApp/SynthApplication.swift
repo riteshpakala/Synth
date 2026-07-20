@@ -7,6 +7,6 @@ struct SynthApplication: App {
         WindowGroup("Synth") {
             ContentView()
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1180, height: 760)
     }
 }

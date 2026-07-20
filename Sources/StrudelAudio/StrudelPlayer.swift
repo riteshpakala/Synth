@@ -82,6 +82,12 @@ public final class StrudelPlayer: @unchecked Sendable {
         cyclist?.setPattern(pattern)
     }
 
+    /// Master output volume (0–1) on the engine's main mixer.
+    public var volume: Double {
+        get { Double(engine.mainMixerNode.outputVolume) }
+        set { engine.mainMixerNode.outputVolume = Float(min(max(newValue, 0), 1)) }
+    }
+
     public func setCps(_ cps: Double) {
         cyclist?.setCps(cps)
     }

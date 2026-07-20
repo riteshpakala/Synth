@@ -1,5 +1,7 @@
 # Synth
 
+![Synth — live-tunable pattern player](README_Assets/1.png)
+
 A Swift port of the [Strudel](https://strudel.cc) live-coding pattern engine
 (the JavaScript port of [TidalCycles](https://tidalcycles.org)), playing
 through native macOS audio. Patterns are functions of rational time,

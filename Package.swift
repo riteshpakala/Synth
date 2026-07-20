@@ -32,5 +32,6 @@ let package = Package(
                     resources: [.copy("Fixtures")]),
         .testTarget(name: "StrudelTonalTests", dependencies: ["StrudelTonal", "StrudelCore", "StrudelMini"]),
         .testTarget(name: "StrudelAudioTests", dependencies: ["StrudelAudio", "StrudelCore", "StrudelMini"]),
+        .testTarget(name: "StrudelScriptTests", dependencies: ["Strudel", "StrudelAudio"]),
     ]
 )
